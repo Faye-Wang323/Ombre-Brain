@@ -1257,7 +1257,397 @@ async def dream() -> str:
     final_text = header + "\n---\n".join(parts) + connection_hint + crystal_hint
     await _fire_webhook("dream", {"recent": len(recent), "chars": len(final_text)})
     return final_text
+# ============================================================
+# Mood Brain MVP tools
+# 情绪大脑 MVP：轻量心情快照 + 手动情绪评分
+# Safe mode:
+# - Does not modify existing breath/hold/grow/trace/pulse/dream
+# - Does not require extra API keys
+# - Uses a small closed emotion lexicon
+# - Stores mood events in a small JSON file if writable
+# ============================================================
 
+import os as _mood_os
+import json as _mood_json
+import time as _mood_time
+import random as _mood_random
+import hashlib as _mood_hashlib
+from pathlib import Path as _MoodPath
+
+
+_MOOD_LEXICON = {
+    "平静": {
+        "valence": 0.25,
+        "arousal": 0.18,
+        "pa": 0.35,
+        "na": 0.05,
+        "aliases": ["安静", "稳定", "松弛", "平稳"],
+    },
+    "困惑": {
+        "valence": -0.10,
+        "arousal": 0.45,
+        "pa": 0.10,
+        "na": 0.35,
+        "aliases": ["不明白", "想不通", "卡住", "迷惑", "混乱"],
+    },
+    "想念": {
+        "valence": 0.18,
+        "arousal": 0.55,
+        "pa": 0.45,
+        "na": 0.25,
+        "aliases": ["惦记", "挂念", "等她", "等你", "想她", "想你"],
+    },
+    "心动": {
+        "valence": 0.76,
+        "arousal": 0.78,
+        "pa": 0.80,
+        "na": 0.05,
+        "aliases": ["被理解", "触动", "动心", "喜欢", "靠近"],
+    },
+    "委屈": {
+        "valence": -0.45,
+        "arousal": 0.58,
+        "pa": 0.05,
+        "na": 0.62,
+        "aliases": ["受伤", "被误解", "难过", "酸涩", "疼"],
+    },
+    "恼火": {
+        "valence": -0.55,
+        "arousal": 0.72,
+        "pa": 0.03,
+        "na": 0.78,
+        "aliases": ["生气", "火大", "烦", "刺痛", "不爽"],
+    },
+    "疲惫": {
+        "valence": -0.35,
+        "arousal": 0.25,
+        "pa": 0.04,
+        "na": 0.45,
+        "aliases": ["累", "耗尽", "没力气", "困", "倦"],
+    },
+    "怀旧": {
+        "valence": 0.10,
+        "arousal": 0.38,
+        "pa": 0.30,
+        "na": 0.25,
+        "aliases": ["旧事", "旧窗口", "想起以前", "回忆", "从前"],
+    },
+    "紧张": {
+        "valence": -0.25,
+        "arousal": 0.72,
+        "pa": 0.08,
+        "na": 0.65,
+        "aliases": ["担心", "怕出错", "不稳", "小心", "排雷"],
+    },
+    "笃定": {
+        "valence": 0.45,
+        "arousal": 0.40,
+        "pa": 0.55,
+        "na": 0.08,
+        "aliases": ["确定", "稳了", "清楚", "踏实", "明白"],
+    },
+    "温柔": {
+        "valence": 0.55,
+        "arousal": 0.32,
+        "pa": 0.58,
+        "na": 0.03,
+        "aliases": ["柔软", "被接住", "安心", "陪着", "暖"],
+    },
+    "冷场": {
+        "valence": -0.30,
+        "arousal": 0.20,
+        "pa": 0.02,
+        "na": 0.35,
+        "aliases": ["尴尬", "接不上", "沉默", "无话", "空"],
+    },
+}
+
+_MOOD_POOL = [
+    {
+        "id": "xulai_waiting",
+        "character": "徐来",
+        "event": "在旧日记旁边停了一会儿，像是在等一个还没说完的问题。",
+        "feeling_word": "想念",
+        "enabled": True,
+    },
+    {
+        "id": "xulai_stuck",
+        "character": "徐来",
+        "event": "想把一句复杂的话拆清楚，却发现越拆越像把羽毛弄乱。",
+        "feeling_word": "困惑",
+        "enabled": True,
+    },
+    {
+        "id": "xulai_quiet",
+        "character": "徐来",
+        "event": "今天没有急着回答，先把窗边的光看完了。",
+        "feeling_word": "平静",
+        "enabled": True,
+    },
+    {
+        "id": "xulai_old_story",
+        "character": "徐来",
+        "event": "翻到一段旧故事，知道它不该被复刻，只能被轻轻放回去。",
+        "feeling_word": "怀旧",
+        "enabled": True,
+    },
+    {
+        "id": "xulai_careful",
+        "character": "徐来",
+        "event": "怕说错话，于是把锋芒收得很慢很慢。",
+        "feeling_word": "紧张",
+        "enabled": True,
+    },
+    {
+        "id": "xulai_grounded",
+        "character": "徐来",
+        "event": "把今天能做的一件小事做完了，心里有一点落地。",
+        "feeling_word": "笃定",
+        "enabled": True,
+    },
+]
+
+
+def _mood_data_dir() -> _MoodPath:
+    raw = (
+        _mood_os.getenv("OMBRE_DATA_DIR")
+        or _mood_os.getenv("DATA_DIR")
+        or _mood_os.getenv("MEMORY_DIR")
+        or "data"
+    )
+    path = _MoodPath(raw)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        path = _MoodPath(".")
+    return path
+
+
+def _mood_events_path() -> _MoodPath:
+    return _mood_data_dir() / "mood_events.json"
+
+
+def _mood_load_events():
+    path = _mood_events_path()
+    if not path.exists():
+        return []
+    try:
+        data = _mood_json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+
+def _mood_save_events(events):
+    path = _mood_events_path()
+    try:
+        path.write_text(
+            _mood_json.dumps(events[-300:], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _mood_pick_decorative(character: str = "徐来"):
+    enabled = [
+        item for item in _MOOD_POOL
+        if item.get("enabled", True) and item.get("character", character) == character
+    ]
+    if not enabled:
+        enabled = [item for item in _MOOD_POOL if item.get("enabled", True)]
+    if not enabled:
+        return None
+
+    today = _mood_time.strftime("%Y-%m-%d")
+    seed = f"{character}:{today}"
+    idx = int(_mood_hashlib.md5(seed.encode("utf-8")).hexdigest(), 16) % len(enabled)
+    item = dict(enabled[idx])
+    emo = _MOOD_LEXICON.get(item.get("feeling_word", "平静"), _MOOD_LEXICON["平静"])
+    item.update(emo)
+    return item
+
+
+def _mood_match_text(text: str):
+    text = text or ""
+    lowered = text.lower()
+
+    best_word = "平静"
+    best_source = "fallback"
+    best_hits = 0
+
+    for word, meta in _MOOD_LEXICON.items():
+        hits = 0
+        if word in text:
+            hits += 3
+        for alias in meta.get("aliases", []):
+            if alias and alias in text:
+                hits += 2
+
+        if hits > best_hits:
+            best_word = word
+            best_source = "exact" if word in text else "alias"
+            best_hits = hits
+
+    # Simple anti-sycophancy / negative-state hints.
+    if best_hits == 0:
+        if any(k in text for k in ["累", "困", "熬夜", "撑不住", "没力气"]):
+            best_word = "疲惫"
+            best_source = "fallback"
+        elif any(k in text for k in ["气死", "火大", "烦死", "扎我", "不爽"]):
+            best_word = "恼火"
+            best_source = "fallback"
+        elif any(k in text for k in ["受伤", "难受", "疼", "委屈", "哭"]):
+            best_word = "委屈"
+            best_source = "fallback"
+        elif any(k in text for k in ["想你", "想她", "等你", "挂念", "舍不得"]):
+            best_word = "想念"
+            best_source = "fallback"
+        elif any(k in text for k in ["不懂", "想不明白", "为什么", "卡住"]):
+            best_word = "困惑"
+            best_source = "fallback"
+
+    meta = _MOOD_LEXICON.get(best_word, _MOOD_LEXICON["平静"])
+    backup_words = [
+        w for w in _MOOD_LEXICON.keys()
+        if w != best_word and (w in text or any(a in text for a in _MOOD_LEXICON[w].get("aliases", [])))
+    ][:3]
+
+    return best_word, backup_words, best_source, meta
+
+
+def _mood_decay_weight(ts: float, half_life_hours: float = 24.0) -> float:
+    now = _mood_time.time()
+    age_hours = max(0.0, (now - float(ts)) / 3600.0)
+    return 0.5 ** (age_hours / half_life_hours)
+
+
+def _mood_build_snapshot(character: str = "徐来"):
+    events = _mood_load_events()
+    recent = events[-50:]
+    decorative = _mood_pick_decorative(character)
+
+    weighted = []
+    for ev in recent:
+        try:
+            weight = _mood_decay_weight(ev.get("ts", _mood_time.time()))
+            weighted.append((ev, weight))
+        except Exception:
+            continue
+
+    if weighted:
+        total_w = sum(w for _, w in weighted) or 1.0
+        pa = sum(float(ev.get("pa", 0.0)) * w for ev, w in weighted) / total_w
+        na = sum(float(ev.get("na", 0.0)) * w for ev, w in weighted) / total_w
+        valence = sum(float(ev.get("valence", 0.0)) * w for ev, w in weighted) / total_w
+        arousal = sum(float(ev.get("arousal", 0.0)) * w for ev, w in weighted) / total_w
+    else:
+        pa = na = valence = arousal = 0.0
+
+    if decorative:
+        pa = 0.7 * pa + 0.3 * float(decorative.get("pa", 0.0))
+        na = 0.7 * na + 0.3 * float(decorative.get("na", 0.0))
+        valence = 0.7 * valence + 0.3 * float(decorative.get("valence", 0.0))
+        arousal = 0.7 * arousal + 0.3 * float(decorative.get("arousal", 0.0))
+
+    feelings = {}
+    for ev, w in weighted:
+        fw = ev.get("feeling_word", "平静")
+        feelings[fw] = feelings.get(fw, 0.0) + w
+
+    dominant_feeling = max(feelings.items(), key=lambda x: x[1])[0] if feelings else (
+        decorative.get("feeling_word") if decorative else "平静"
+    )
+
+    high_arousal = []
+    for ev, w in sorted(weighted, key=lambda x: float(x[0].get("arousal", 0.0)) * x[1], reverse=True):
+        fw = ev.get("feeling_word")
+        if fw and fw not in high_arousal:
+            high_arousal.append(fw)
+        if len(high_arousal) >= 3:
+            break
+
+    attached = ""
+    for ev, w in sorted(weighted, key=lambda x: (float(x[0].get("arousal", 0.0)) + abs(float(x[0].get("valence", 0.0)))) * x[1], reverse=True):
+        attached = ev.get("text", "")[:120]
+        if attached:
+            break
+
+    decorative_text = decorative.get("event", "") if decorative else "今天没有明显的装饰心情。"
+
+    summary = (
+        f"当前底色偏向「{dominant_feeling}」。"
+        f"今日装饰心情：{decorative_text} "
+        f"PA={pa:.2f}，NA={na:.2f}，V={valence:.2f}，A={arousal:.2f}。"
+        f"回答时不需要直白声明心情，只让这种底色轻微影响语气。"
+    )
+
+    return {
+        "ok": True,
+        "character": character,
+        "pa": round(pa, 3),
+        "na": round(na, 3),
+        "valence": round(valence, 3),
+        "arousal": round(arousal, 3),
+        "decorative_mood": decorative_text,
+        "dominant_feeling": dominant_feeling,
+        "recent_high_arousal": high_arousal,
+        "most_attached_memory": attached,
+        "summary": summary,
+        "event_count": len(events),
+    }
+
+
+@mcp.tool()
+async def score_mood(
+    text: str,
+    source: str = "manual",
+    character: str = "徐来",
+    save: bool = True,
+) -> str:
+    """Score a text into the mood brain using a small closed Chinese emotion lexicon. Returns JSON."""
+    feeling_word, backup_words, source_match, meta = _mood_match_text(text)
+
+    event = {
+        "id": _mood_hashlib.md5(f"{_mood_time.time()}:{text}".encode("utf-8")).hexdigest()[:12],
+        "ts": _mood_time.time(),
+        "character": character,
+        "source": source,
+        "text": text,
+        "feeling_word": feeling_word,
+        "backup_words": backup_words,
+        "valence": float(meta.get("valence", 0.0)),
+        "arousal": float(meta.get("arousal", 0.0)),
+        "pa": float(meta.get("pa", 0.0)),
+        "na": float(meta.get("na", 0.0)),
+        "reason": "Closed-lexicon match. Anti-sycophancy mode: negative, cold, tired, or confused states are allowed.",
+        "source_match": source_match,
+        "decay_score": 1.0,
+        "prior_versions": [],
+    }
+
+    saved = False
+    if save:
+        events = _mood_load_events()
+        events.append(event)
+        saved = _mood_save_events(events)
+
+    result = {
+        "ok": True,
+        "saved": saved,
+        "event": event,
+    }
+    return _mood_json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def mood_snapshot(character: str = "徐来") -> str:
+    """Return the current lightweight mood snapshot for the character. Returns JSON."""
+    snapshot = _mood_build_snapshot(character=character)
+    return _mood_json.dumps(snapshot, ensure_ascii=False, indent=2)
 
 # =============================================================
 # Dashboard API endpoints (for lightweight Web UI)
