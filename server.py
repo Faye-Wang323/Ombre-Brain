@@ -767,23 +767,23 @@ async def breath(
         await _fire_webhook("breath", {"mode": "empty", "matches": 0})
         return "未找到相关记忆。"
     
-final_text = "\n---\n".join(results)
-await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
-try:
-    mood = _mood_build_snapshot(character="徐来")
-    mood_text = (
-        "\n\n---\n"
-        "🫀 当前心情快照（轻量）\n"
-        f"{mood.get('summary', '')}\n"
-        f"主情绪：{mood.get('dominant_feeling', '平静')}；"
-        f"PA={mood.get('pa', 0)}，NA={mood.get('na', 0)}；"
-        f"近期高唤醒：{', '.join(mood.get('recent_high_arousal', [])) or '无'}。"
-    )
-    final_text = final_text + mood_text
-except Exception as e:
-    logger.warning(f"Mood snapshot append failed in breath: {e}")
-
-return final_text
+    final_text = "\n---\n".join(results)
+    await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
+    try:
+        mood = _mood_build_snapshot(character="徐来")
+        mood_text = (
+            "\n\n---\n"
+            "🫀 当前心情快照（轻量）\n"
+            f"{mood.get('summary', '')}\n"
+            f"主情绪：{mood.get('dominant_feeling', '平静')}；"
+            f"PA={mood.get('pa', 0)}，NA={mood.get('na', 0)}；"
+            f"近期高唤醒：{', '.join(mood.get('recent_high_arousal', [])) or '无'}。"
+        )
+        final_text = final_text + mood_text
+    except Exception as e:
+        logger.warning(f"Mood snapshot append failed in breath: {e}")
+    
+    return final_text
 
 
 # =============================================================
