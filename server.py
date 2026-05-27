@@ -885,11 +885,10 @@ async def hold(
             pass
         try:
             if content:
-                await score_mood(
+                _mood_record_event_sync(
                     text=content,
                     source="hold",
                     character="徐来",
-                    save=True,
                 )
         except Exception as e:
             logger.warning(f"Auto mood scoring failed in hold pinned: {e}")
@@ -909,15 +908,15 @@ async def hold(
     action = "合并→" if is_merged else "新建→"
     try:
         if content:
-            await score_mood(
+            _mood_record_event_sync(
                 text=content,
                 source="hold",
                 character="徐来",
-                save=True,
             )
     except Exception as e:
         logger.warning(f"Auto mood scoring failed in hold: {e}")
-    return f"{action}{result_name} {','.join(domain)}"
+
+    return f"{action}→{result_name} {'；'.join(domain)}"
 
 
 # =============================================================
@@ -1558,7 +1557,6 @@ def _mood_decay_weight(ts: float, half_life_hours: float = 24.0) -> float:
     age_hours = max(0.0, (now - float(ts)) / 3600.0)
     return 0.5 ** (age_hours / half_life_hours)
 
-
 def _mood_build_snapshot(character: str = "徐来"):
     events = _mood_load_events()
     recent = events[-50:]
@@ -1634,7 +1632,31 @@ def _mood_build_snapshot(character: str = "徐来"):
         "event_count": len(events),
     }
 
+def _mood_record_event_sync(text: str, source: str = "manual", character: str = "徐来"):
+    feeling_word, backup_words, source_match, meta = _mood_match_text(text)
 
+    event = {
+        "id": _mood_hashlib.md5(f"{_mood_time.time()}:{text}".encode("utf-8")).hexdigest()[:12],
+        "ts": _mood_time.time(),
+        "character": character,
+        "source": source,
+        "text": text,
+        "feeling_word": feeling_word,
+        "backup_words": backup_words,
+        "valence": float(meta.get("valence", 0.0)),
+        "arousal": float(meta.get("arousal", 0.0)),
+        "pa": float(meta.get("pa", 0.0)),
+        "na": float(meta.get("na", 0.0)),
+        "reason": "Closed-lexicon match from automatic mood event recording.",
+        "source_match": source_match,
+        "decay_score": 1.0,
+        "prior_versions": [],
+    }
+
+    events = _mood_load_events()
+    events.append(event)
+    saved = _mood_save_events(events)
+    return event, saved
 @mcp.tool()
 async def score_mood(
     text: str,
