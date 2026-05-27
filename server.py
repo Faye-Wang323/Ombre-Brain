@@ -766,10 +766,24 @@ async def breath(
     if not results:
         await _fire_webhook("breath", {"mode": "empty", "matches": 0})
         return "未找到相关记忆。"
+    
+final_text = "\n---\n".join(results)
+await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
+try:
+    mood = _mood_build_snapshot(character="徐来")
+    mood_text = (
+        "\n\n---\n"
+        "🫀 当前心情快照（轻量）\n"
+        f"{mood.get('summary', '')}\n"
+        f"主情绪：{mood.get('dominant_feeling', '平静')}；"
+        f"PA={mood.get('pa', 0)}，NA={mood.get('na', 0)}；"
+        f"近期高唤醒：{', '.join(mood.get('recent_high_arousal', [])) or '无'}。"
+    )
+    final_text = final_text + mood_text
+except Exception as e:
+    logger.warning(f"Mood snapshot append failed in breath: {e}")
 
-    final_text = "\n---\n".join(results)
-    await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
-    return final_text
+return final_text
 
 
 # =============================================================
@@ -869,6 +883,16 @@ async def hold(
             await embedding_engine.generate_and_store(bucket_id, content)
         except Exception:
             pass
+        try:
+            if content:
+                await score_mood(
+                    text=content,
+                    source="hold",
+                    character="徐来",
+                    save=True,
+                )
+        except Exception as e:
+            logger.warning(f"Auto mood scoring failed in hold pinned: {e}")
         return f"📌钉选→{bucket_id} {','.join(domain)}"
 
     # --- Step 2: merge or create / 合并或新建 ---
@@ -883,6 +907,16 @@ async def hold(
     )
 
     action = "合并→" if is_merged else "新建→"
+    try:
+        if content:
+            await score_mood(
+                text=content,
+                source="hold",
+                character="徐来",
+                save=True,
+            )
+    except Exception as e:
+        logger.warning(f"Auto mood scoring failed in hold: {e}")
     return f"{action}{result_name} {','.join(domain)}"
 
 
