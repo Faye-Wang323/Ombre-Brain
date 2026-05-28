@@ -1608,13 +1608,14 @@ def _mood_build_snapshot(character: str = "徐来"):
             break
 
     decorative_text = decorative.get("event", "") if decorative else "今天没有明显的装饰心情。"
-
-summary = (
-    f"当前底色偏向「{dominant_feeling}」。"
-    f"今日背景底色（可参考，不代表真实当前情绪）：{decorative_text} "
-    f"PA={pa:.2f}，NA={na:.2f}，V={valence:.2f}，A={arousal:.2f}。"
-    f"回答时不需要直白声明心情；真实状态应结合当前对话和自身判断。"
-)
+    summary = (
+        f"当前加权情绪偏向「{dominant_feeling}」。"
+        f"今日背景底色（可参考，不代表真实当前情绪）：{decorative_text} "
+        f"真实互动事件数量：{len(events)}。"
+        f"近期高唤醒：{', '.join(high_arousal) or '无'}。"
+        f"最挂念事项：{attached or '暂无'}。"
+        f"回答时不要把背景底色当成真实心情；真实状态优先参考 mood_events、当前对话和自身判断。"
+    )
 
     return {
         "ok": True,
