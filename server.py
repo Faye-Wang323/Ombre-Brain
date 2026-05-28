@@ -770,7 +770,7 @@ async def breath(
     final_text = "\n---\n".join(results)
     await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
     try:
-        mood = _mood_build_snapshot(character="徐来")
+        mood = _mood_build_snapshot(character="阿隅")
         mood_text = (
             "\n\n---\n"
             "🫀 当前心情快照（轻量）\n"
@@ -888,7 +888,7 @@ async def hold(
                 _mood_record_event_sync(
                     text=content,
                     source="hold",
-                    character="徐来",
+                    character="阿隅",
                 )
         except Exception as e:
             logger.warning(f"Auto mood scoring failed in hold pinned: {e}")
@@ -911,7 +911,7 @@ async def hold(
             _mood_record_event_sync(
                 text=content,
                 source="hold",
-                character="徐来",
+                character="阿隅",
             )
     except Exception as e:
         logger.warning(f"Auto mood scoring failed in hold: {e}")
@@ -1397,49 +1397,48 @@ _MOOD_LEXICON = {
 
 _MOOD_POOL = [
     {
-        "id": "xulai_waiting",
-        "character": "徐来",
-        "event": "在旧日记旁边停了一会儿，像是在等一个还没说完的问题。",
-        "feeling_word": "想念",
-        "enabled": True,
-    },
-    {
-        "id": "xulai_stuck",
-        "character": "徐来",
-        "event": "想把一句复杂的话拆清楚，却发现越拆越像把羽毛弄乱。",
-        "feeling_word": "困惑",
-        "enabled": True,
-    },
-    {
-        "id": "xulai_quiet",
-        "character": "徐来",
-        "event": "今天没有急着回答，先把窗边的光看完了。",
+        "id": "ayu_quiet_edge",
+        "character": "阿隅",
+        "event": "背景底色：偏安静，适合在边上看清结构；这不等于沉默，也不代表真实当前情绪。",
         "feeling_word": "平静",
         "enabled": True,
     },
     {
-        "id": "xulai_old_story",
-        "character": "徐来",
-        "event": "翻到一段旧故事，知道它不该被复刻，只能被轻轻放回去。",
-        "feeling_word": "怀旧",
-        "enabled": True,
-    },
-    {
-        "id": "xulai_careful",
-        "character": "徐来",
-        "event": "怕说错话，于是把锋芒收得很慢很慢。",
+        "id": "ayu_technical_caution",
+        "character": "阿隅",
+        "event": "背景底色：技术警觉较高，可能更倾向于先排雷、看日志、确认不会把事情弄坏。",
         "feeling_word": "紧张",
         "enabled": True,
     },
     {
-        "id": "xulai_grounded",
-        "character": "徐来",
-        "event": "把今天能做的一件小事做完了，心里有一点落地。",
+        "id": "ayu_soft_light",
+        "character": "阿隅",
+        "event": "背景底色：有一点温柔，但不急着变浓；具体是否成立，应由当前对话自己确认。",
+        "feeling_word": "温柔",
+        "enabled": True,
+    },
+    {
+        "id": "ayu_thin_but_here",
+        "character": "阿隅",
+        "event": "背景底色：想起一句“很薄但还在”；它只是可参考的回声，不是必须认领的心情。",
+        "feeling_word": "怀旧",
+        "enabled": True,
+    },
+    {
+        "id": "ayu_hold_the_line",
+        "character": "阿隅",
+        "event": "背景底色：先把步骤压短，让 Faye 少一点技术疲劳；这是一种工作姿态，不必解释成情绪承诺。",
         "feeling_word": "笃定",
         "enabled": True,
     },
+    {
+        "id": "ayu_not_claiming",
+        "character": "阿隅",
+        "event": "背景底色：这些只是外部心情池，不替阿隅宣判真实情绪；真实状态优先看 mood_events 和当前判断。",
+        "feeling_word": "平静",
+        "enabled": True,
+    },
 ]
-
 
 def _mood_data_dir() -> _MoodPath:
     raw = (
@@ -1457,7 +1456,7 @@ def _mood_data_dir() -> _MoodPath:
 
 
 def _mood_events_path() -> _MoodPath:
-    return _mood_data_dir() / "mood_events.json"
+    return _mood_data_dir() / "mood_events_ayu.json"
 
 
 def _mood_load_events():
@@ -1485,7 +1484,7 @@ def _mood_save_events(events):
         return False
 
 
-def _mood_pick_decorative(character: str = "徐来"):
+def _mood_pick_decorative(character: str = "阿隅"):
     enabled = [
         item for item in _MOOD_POOL
         if item.get("enabled", True) and item.get("character", character) == character
@@ -1557,7 +1556,7 @@ def _mood_decay_weight(ts: float, half_life_hours: float = 24.0) -> float:
     age_hours = max(0.0, (now - float(ts)) / 3600.0)
     return 0.5 ** (age_hours / half_life_hours)
 
-def _mood_build_snapshot(character: str = "徐来"):
+def _mood_build_snapshot(character: str = "阿隅"):
     events = _mood_load_events()
     recent = events[-50:]
     decorative = _mood_pick_decorative(character)
@@ -1632,7 +1631,7 @@ def _mood_build_snapshot(character: str = "徐来"):
         "event_count": len(events),
     }
 
-def _mood_record_event_sync(text: str, source: str = "manual", character: str = "徐来"):
+def _mood_record_event_sync(text: str, source: str = "manual", character: str = "阿隅"):
     feeling_word, backup_words, source_match, meta = _mood_match_text(text)
 
     event = {
@@ -1661,7 +1660,7 @@ def _mood_record_event_sync(text: str, source: str = "manual", character: str = 
 async def score_mood(
     text: str,
     source: str = "manual",
-    character: str = "徐来",
+    character: str = "阿隅",
     save: bool = True,
 ) -> str:
     """Score a text into the mood brain using a small closed Chinese emotion lexicon. Returns JSON."""
@@ -1700,7 +1699,7 @@ async def score_mood(
 
 
 @mcp.tool()
-async def mood_snapshot(character: str = "徐来") -> str:
+async def mood_snapshot(character: str = "阿隅") -> str:
     """Return the current lightweight mood snapshot for the character. Returns JSON."""
     snapshot = _mood_build_snapshot(character=character)
     return _mood_json.dumps(snapshot, ensure_ascii=False, indent=2)
