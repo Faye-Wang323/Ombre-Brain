@@ -278,6 +278,11 @@ class DecayEngine:
     async def start(self) -> None:
         """Start the background decay loop.
         启动后台衰减循环。"""
+        import os
+        if os.getenv("OMBRE_DECAY_ENABLED", "true").lower() in ("false", "0", "off"):
+            logger.info("Decay engine disabled by env / 衰减引擎被环境变量关闭")
+            return
+
         if self._running:
             return
         self._running = True
