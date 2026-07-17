@@ -117,6 +117,10 @@ def load_config(config_path: str = None) -> dict:
     env_embed_base_url = os.environ.get("OMBRE_EMBEDDING_BASE_URL", "")
     if env_embed_base_url:
         config.setdefault("embedding", {})["base_url"] = env_embed_base_url
+    # OMBRE_EMBEDDING_API_KEY overrides embedding.api_key (falls back to OMBRE_API_KEY)
+    env_embed_api_key = os.environ.get("OMBRE_EMBEDDING_API_KEY", "")
+    if env_embed_api_key:
+        config.setdefault("embedding", {})["api_key"] = env_embed_api_key
 
     # --- Ensure bucket storage directories exist ---
     # --- 确保记忆桶存储目录存在 ---
