@@ -1909,6 +1909,10 @@ async def api_system_status(request):
 if __name__ == "__main__":
     transport = config.get("transport", "stdio")
     logger.info(f"Ombre Brain starting | transport: {transport}")
+        # --- OB migration & export / 迁移开关与备份导出 ---
+    from migrate_embeddings import maybe_reembed_on_boot, install_export_route
+    install_export_route(mcp, _require_auth, config)
+    maybe_reembed_on_boot(config)
 
     if transport in ("sse", "streamable-http"):
         import threading
